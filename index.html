@@ -105,7 +105,7 @@
 <div class="stats-box">
     <div style="font-size: 12px; color: #666; font-weight: bold; margin-bottom: 5px;">SYSTEM OVERVIEW</div>
     <div style="font-size: 11px; line-height: 1.6;">
-        <span class="pulse-status"></span> Total Units: <b id="total-units">0</b><br>
+        <span class="pulse-status"></span> Total Zones: <b id="total-zones">0</b><br>
         <span style="color: #e74c3c;">●</span> Alert Zones: <b id="total-alerts" style="color: #e74c3c;">0</b>
     </div>
 </div>
@@ -199,7 +199,10 @@ $(document).ready(function(){
         $.get(`${apiBase}/get-units`, function(res) {
             if(res.success && res.data.items) {
                 var allUnits = res.data.items;
-                $("#total-units").text(allUnits.length);
+                
+                // --- UPDATED PART START ---
+                $("#total-zones").text(areaConfigs.length); // Total units ki jagah total zones
+                // --- UPDATED PART END ---
                 
                 var alertsCount = 0;
 
