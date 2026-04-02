@@ -87,12 +87,31 @@
         .leaflet-tooltip-pane .area-label::before {
             border-top-color: #2c3e50 !important;
         }
+
+        /* Reset View Button Styling */
+#reset-map-btn {
+    position: absolute;
+    top: 20px;
+    right: 220px; /* Stats box ke saath adjust kiya hai */
+    z-index: 1000;
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid #ddd;
+    padding: 8px 15px;
+    border-radius: 8px;
+    cursor: pointer;
+    font-weight: bold;
+    font-size: 12px;
+    display: none; /* Default mein hidden rahega */
+    transition: all 0.3s;
+    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+}
+#reset-map-btn:hover { background: #2c3e50; color: white; }
     </style>
 </head>
 <body>
 
 <div id="map"></div>
-
+<button id="reset-map-btn" onclick="resetMapFocus()">⟲ Reset View</button>
 <div id="side-dashboard">
     <div class="dash-header">
         <span>Resource Monitor</span>
@@ -111,85 +130,93 @@
 </div>
 
 <script>
+// Global variables taake har function ko access milay
+var map;
+var areaConfigs = [];
+var areaLayers = {}; 
+var unitMarkers = {}; 
+var apiBase = "https://jzr-person-tracking-stag.tagntech.com/api/Wialon";
+
 $(document).ready(function(){
-    // Madina Initial Position
-    var map = L.map('map', { zoomControl: false }).setView([24.492993, 39.65313], 14);
+    // 1. Initialize Map
+    map = L.map('map', { zoomControl: false }).setView([24.492993, 39.65313], 14);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
     L.control.zoom({ position: 'bottomright' }).addTo(map);
 
-    var areaConfigs = [];
-    var areaLayers = {}; 
-    var unitMarkers = {}; 
+    // 2. Load Data
+    init();
 
-    // API Base URL (Update port if needed)
-    var apiBase = "https://jzr-person-tracking-stag.tagntech.com/api/Wialon";
-
-    // 1. Initial Load: Get Config from appsettings via Backend
     function init() {
         $.get(`${apiBase}/get-areas-config`, function(res) {
             if(res.success) {
                 areaConfigs = res.data;
                 setupUI();
-
-                // --- Naya Code: Saare areas ko screen par fit karne ke liye ---
-                var group = new L.featureGroup(Object.values(areaLayers));
-                map.fitBounds(group.getBounds(), { padding: [50, 50] });
-
                 startTracking();
-            } else {
-                console.error("Config load failed:", res.message);
             }
         });
     }
 
     function setupUI() {
-    areaConfigs.forEach(area => {
-        // Map: Draw Polygons
-        var poly = L.polygon(area.coords, {
-            color: area.color, 
-            fillColor: area.color, 
-            weight: 2, 
-            fillOpacity: 0.1
-        }).addTo(map);
-
-        // --- UPDATED: Tooltip now only shows on Hover ---
-        poly.bindTooltip(area.id, {
-            permanent: false,    // Hamesha nahi dikhega
-            sticky: true,        // Mouse ke saath move karega
-            direction: 'top',    // Mouse ke upar nazar ayega
-            className: 'area-label' 
-        });
-
-        // Hover Effect: Opacity change logic
-        poly.on('mouseover', function (e) {
-            this.setStyle({ fillOpacity: 0.4, weight: 4 });
-        });
+        console.log("Drawing Geofences...", areaConfigs);
+        $("#area-tiles-container").empty();
         
-        poly.on('mouseout', function (e) {
-            var isViolated = $(`#tile-${area.id.replace(/\s+/g, '-')}`).hasClass('tile-danger');
-            this.setStyle({ 
-                fillOpacity: isViolated ? 0.3 : 0.1, 
-                weight: 2 
-            });
+        if(!areaConfigs || areaConfigs.length === 0) return;
+
+        areaConfigs.forEach(area => {
+            var minReq = area.MinUnitsRequired || 0;
+            var color = area.color || '#3498db';
+            var areaId = area.id;
+            var shape = null;
+            // Agar address null ho to empty string show karein
+            var areaAddress = area.address || "No description available";
+
+            try {
+                if (area.points && area.points.length > 0) {
+                    var leafletCoords = area.points.map(p => L.latLng(parseFloat(p.lat), parseFloat(p.lng)));
+                    shape = L.polygon(leafletCoords, { 
+                        color: color, fillColor: color, weight: 3, fillOpacity: 0.3 
+                    }).addTo(map);
+                } 
+                else if (area.center && area.center.lat) {
+                    shape = L.circle([parseFloat(area.center.lat), parseFloat(area.center.lng)], {
+                        radius: parseInt(area.width) || 50,
+                        color: color, fillColor: color, weight: 3, fillOpacity: 0.3
+                    }).addTo(map);
+                }
+
+                if (shape) {
+                    shape.bindTooltip(area.name, { sticky: true, className: 'area-label' });
+                    areaLayers[areaId] = shape;
+                }
+            } catch (err) {
+                console.error("Error drawing area:", area.name, err);
+            }
+
+            // --- Updated Tile with Description (Address) ---
+            var safeId = "area-" + areaId;
+            $("#area-tiles-container").append(`
+                <div id="tile-${safeId}" class="area-tile">
+                    <div class="tile-header">
+                        <div style="display: flex; flex-direction: column;">
+                            <span class="area-name">${area.name}</span>
+                            <span style="font-size: 10px; color: #95a5a6; margin-top: 2px;">${areaAddress}</span>
+                        </div>
+                        <span class="device-count">
+                            <span class="curr">0</span>/<span class="req">${minReq}</span>
+                        </span>
+                    </div>
+                    <div class="unit-list">Scanning...</div>
+                </div>
+            `);
         });
 
-        areaLayers[area.id] = poly;
+        var layerArray = Object.values(areaLayers);
+        if(layerArray.length > 0) {
+            var group = new L.featureGroup(layerArray);
+            map.fitBounds(group.getBounds(), { padding: [50, 50] });
+        }
+    }
 
-        // Sidebar: Add Tiles
-        var safeId = area.id.replace(/\s+/g, '-');
-        $("#area-tiles-container").append(`
-            <div id="tile-${safeId}" class="area-tile">
-                <div class="tile-header">
-                    <span class="area-name">${area.id}</span>
-                    <span class="device-count"><span class="curr">0</span>/${area.minDevicesRequired}</span>
-                </div>
-                <div class="unit-list">Syncing...</div>
-            </div>
-        `);
-    });
-}
-    
-// 2. Fetch Wialon Units and Match
     function startTracking() {
         setInterval(refreshData, 5000);
         refreshData();
@@ -197,57 +224,55 @@ $(document).ready(function(){
 
     function refreshData() {
         $.get(`${apiBase}/get-units`, function(res) {
-            if(res.success && res.data.items) {
-                var allUnits = res.data.items;
-                
-                // --- UPDATED PART START ---
-                $("#total-zones").text(areaConfigs.length); // Total units ki jagah total zones
-                // --- UPDATED PART END ---
-                
+            if(res.success && res.data && res.data.items) {
+                var allUnits = res.data.items; 
+                $("#total-zones").text(areaConfigs.length);
                 var alertsCount = 0;
 
                 areaConfigs.forEach(area => {
-                    var activeNamesInside = [];
+                    var activeUnitsInThisArea = [];
+                    var layer = areaLayers[area.id];
                     
                     allUnits.forEach(unit => {
-                        // Check if this unit is part of the area's target list
-                        if(area.targetDeviceNames.includes(unit.nm)) {
-                            if(unit.pos && isInside(unit.pos.y, unit.pos.x, areaLayers[area.id])) {
-                                activeNamesInside.push(unit.nm);
+                        if(unit && unit.pos && layer) {
+                            if(isInside(unit.pos.y, unit.pos.x, layer)) {
+                                activeUnitsInThisArea.push(unit.nm);
                             }
                             updateMarker(unit);
                         }
                     });
 
-                    // Update UI for this area
-                    var isAlert = activeNamesInside.length < area.minDevicesRequired;
+                    var minReq = area.MinUnitsRequired || 0;
+                    var isAlert = activeUnitsInThisArea.length < minReq;
                     if(isAlert) alertsCount++;
-                    updateAreaVisuals(area, activeNamesInside, isAlert);
+                    
+                    updateAreaVisuals(area, activeUnitsInThisArea, isAlert);
                 });
-
                 $("#total-alerts").text(alertsCount);
             }
         });
     }
 
     function updateAreaVisuals(area, unitsInside, isAlert) {
-        var safeId = area.id.replace(/\s+/g, '-');
+        var safeId = "area-" + area.id;
         var tile = $(`#tile-${safeId}`);
-        var poly = areaLayers[area.id];
+        var layer = areaLayers[area.id];
+
+        if(!tile.length || !layer) return;
 
         tile.find('.curr').text(unitsInside.length);
         tile.find('.unit-list').html(unitsInside.length > 0 
-            ? "<b>Active:</b> " + unitsInside.join(", ") 
-            : "No required persons present");
+            ? "<b>Units:</b> " + unitsInside.join(", ") 
+            : "No units present");
 
         if(isAlert) {
             tile.addClass('tile-danger').removeClass('tile-success');
-            poly.setStyle({ color: '#e74c3c', fillColor: '#e74c3c', fillOpacity: 0.3 });
-            if(poly._path) L.DomUtil.addClass(poly._path, 'blink-polygon');
+            layer.setStyle({ color: '#e74c3c', fillColor: '#e74c3c', fillOpacity: 0.4 });
+            $(layer._path).addClass('blink-polygon'); // CSS Animation
         } else {
             tile.addClass('tile-success').removeClass('tile-danger');
-            poly.setStyle({ color: area.color, fillColor: area.color, fillOpacity: 0.1 });
-            if(poly._path) L.DomUtil.removeClass(poly._path, 'blink-polygon');
+            layer.setStyle({ color: area.color, fillColor: area.color, fillOpacity: 0.1 });
+            $(layer._path).removeClass('blink-polygon');
         }
     }
 
@@ -255,28 +280,38 @@ $(document).ready(function(){
         var pos = [unit.pos.y, unit.pos.x];
         if(!unitMarkers[unit.nm]) {
             unitMarkers[unit.nm] = L.circleMarker(pos, {
-                radius: 7, color: '#fff', weight: 2, fillColor: '#3498db', fillOpacity: 1
+                radius: 6, color: '#fff', weight: 2, fillColor: '#3498db', fillOpacity: 1
             }).addTo(map).bindPopup(`<b>${unit.nm}</b>`);
         } else {
             unitMarkers[unit.nm].setLatLng(pos);
         }
     }
 
-    // Mathematical Inside/Outside Check
-    function isInside(lat, lng, poly) {
-        var polyPoints = poly.getLatLngs()[0];
-        var x = lat, y = lng;
-        var inside = false;
-        for (var i = 0, j = polyPoints.length - 1; i < polyPoints.length; j = i++) {
-            var xi = polyPoints[i].lat, yi = polyPoints[i].lng;
-            var xj = polyPoints[j].lat, yj = polyPoints[j].lng;
-            var intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
-            if (intersect) inside = !inside;
-        }
-        return inside;
-    }
+    function isInside(lat, lng, layer) {
+        if (!layer) return false;
 
-    init();
+        // 1. Circle Check
+        if (layer instanceof L.Circle) {
+            var distance = map.distance([lat, lng], layer.getLatLng());
+            return distance <= layer.getRadius();
+        }
+
+        // 2. Polygon Check
+        if (layer instanceof L.Polygon) {
+            var pt = L.latLng(lat, lng);
+            var polyPoints = layer.getLatLngs()[0];
+            var x = pt.lat, y = pt.lng;
+            var inside = false;
+            for (var i = 0, j = polyPoints.length - 1; i < polyPoints.length; j = i++) {
+                var xi = polyPoints[i].lat, yi = polyPoints[i].lng;
+                var xj = polyPoints[j].lat, yj = polyPoints[j].lng;
+                var intersect = ((yi > y) != (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+                if (intersect) inside = !inside;
+            }
+            return inside;
+        }
+        return false;
+    }
 });
 </script>
 
