@@ -157,65 +157,87 @@ $(document).ready(function(){
     }
 
     function setupUI() {
-        console.log("Drawing Geofences...", areaConfigs);
-        $("#area-tiles-container").empty();
-        
-        if(!areaConfigs || areaConfigs.length === 0) return;
+    console.log("Drawing Geofences...", areaConfigs);
+    $("#area-tiles-container").empty();
+    
+    if(!areaConfigs || areaConfigs.length === 0) return;
 
-        areaConfigs.forEach(area => {
-            var minReq = area.MinUnitsRequired || 0;
-            var color = area.color || '#3498db';
-            var areaId = area.id;
-            var shape = null;
-            // Agar address null ho to empty string show karein
-            var areaAddress = area.address || "No description available";
+    areaConfigs.forEach(area => {
+        var minReq = area.minUnitsRequired || 0;
+        var color = area.color || '#3498db';
+        var areaId = area.id;
+        var shape = null;
+        var areaAddress = area.address || "No description available";
 
-            try {
-                if (area.points && area.points.length > 0) {
-                    var leafletCoords = area.points.map(p => L.latLng(parseFloat(p.lat), parseFloat(p.lng)));
-                    shape = L.polygon(leafletCoords, { 
-                        color: color, fillColor: color, weight: 3, fillOpacity: 0.3 
-                    }).addTo(map);
-                } 
-                else if (area.center && area.center.lat) {
-                    shape = L.circle([parseFloat(area.center.lat), parseFloat(area.center.lng)], {
-                        radius: parseInt(area.width) || 50,
-                        color: color, fillColor: color, weight: 3, fillOpacity: 0.3
-                    }).addTo(map);
-                }
-
-                if (shape) {
-                    shape.bindTooltip(area.name, { sticky: true, className: 'area-label' });
-                    areaLayers[areaId] = shape;
-                }
-            } catch (err) {
-                console.error("Error drawing area:", area.name, err);
+        try {
+            // Polygon handling (Type 2)
+            if (area.points && area.points.length > 0) {
+                // WIALON FIX: y = Latitude, x = Longitude
+                var leafletCoords = area.points.map(p => {
+                    return L.latLng(parseFloat(p.y), parseFloat(p.x));
+                });
+                
+                shape = L.polygon(leafletCoords, { 
+                    color: color, fillColor: color, weight: 3, fillOpacity: 0.3 
+                }).addTo(map);
+            } 
+            // Circle handling (Type 3) - Agar center object ho to
+            else if (area.center && (area.center.y || area.center.lat)) {
+                var lat = area.center.y || area.center.lat;
+                var lng = area.center.x || area.center.lng;
+                
+                shape = L.circle([parseFloat(lat), parseFloat(lng)], {
+                    radius: parseInt(area.width) || 50,
+                    color: color, fillColor: color, weight: 3, fillOpacity: 0.3
+                }).addTo(map);
             }
 
-            // --- Updated Tile with Description (Address) ---
-            var safeId = "area-" + areaId;
-            $("#area-tiles-container").append(`
-                <div id="tile-${safeId}" class="area-tile">
-                    <div class="tile-header">
-                        <div style="display: flex; flex-direction: column;">
-                            <span class="area-name">${area.name}</span>
-                            <span style="font-size: 10px; color: #95a5a6; margin-top: 2px;">${areaAddress}</span>
-                        </div>
-                        <span class="device-count">
-                            <span class="curr">0</span>/<span class="req">${minReq}</span>
-                        </span>
-                    </div>
-                    <div class="unit-list">Scanning...</div>
-                </div>
-            `);
-        });
-
-        var layerArray = Object.values(areaLayers);
-        if(layerArray.length > 0) {
-            var group = new L.featureGroup(layerArray);
-            map.fitBounds(group.getBounds(), { padding: [50, 50] });
+            if (shape) {
+                shape.bindTooltip(area.name, { sticky: true, className: 'area-label' });
+                areaLayers[areaId] = shape;
+            }
+        } catch (err) {
+            console.error("Error drawing area:", area.name, err);
         }
+
+        // --- Tile Generation ---
+        var safeId = "area-" + areaId;
+        $("#area-tiles-container").append(`
+            <div id="tile-${safeId}" class="area-tile" style="cursor:pointer">
+                <div class="tile-header">
+                    <div style="display: flex; flex-direction: column;">
+                        <span class="area-name">${area.name}</span>
+                        <span style="font-size: 10px; color: #95a5a6; margin-top: 2px;">${areaAddress}</span>
+                    </div>
+                    <span class="device-count">
+                        <span class="curr">0</span>/<span class="req">${minReq}</span>
+                    </span>
+                </div>
+                <div class="unit-list">Scanning...</div>
+            </div>
+        `);
+
+        // Tile click zoom logic (Jo pehle discuss hui thi)
+        $(document).off('click', `#tile-${safeId}`).on('click', `#tile-${safeId}`, function() {
+            var layer = areaLayers[areaId];
+            if (layer) {
+                if (layer instanceof L.Circle) {
+                    map.setView(layer.getLatLng(), 17, { animate: true });
+                } else {
+                    map.fitBounds(layer.getBounds(), { padding: [40, 40], animate: true });
+                }
+                $("#reset-map-btn").fadeIn();
+            }
+        });
+    });
+
+    // Sare areas draw hone ke baad map focus karein
+    var layerArray = Object.values(areaLayers);
+    if(layerArray.length > 0) {
+        var group = new L.featureGroup(layerArray);
+        map.fitBounds(group.getBounds(), { padding: [50, 50] });
     }
+}
 
     function startTracking() {
         setInterval(refreshData, 5000);
@@ -242,7 +264,7 @@ $(document).ready(function(){
                         }
                     });
 
-                    var minReq = area.MinUnitsRequired || 0;
+                    var minReq = area.minUnitsRequired || 0;
                     var isAlert = activeUnitsInThisArea.length < minReq;
                     if(isAlert) alertsCount++;
                     
